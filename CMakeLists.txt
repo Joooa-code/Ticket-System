@@ -8,10 +8,12 @@ include_directories(src)
 add_executable(Ticket_System
         src/main.cpp
         src/system.cpp
-        src/system.h
+        include/system.h
         src/train.cpp
-        src/train.h
+        include/train.h
         src/user.cpp
-        src/user.h
+        include/user.h
         src/utils.cpp
-        src/utils.h)
+        include/utils.h
+        include/bpt.h
+        include/vector.h)
