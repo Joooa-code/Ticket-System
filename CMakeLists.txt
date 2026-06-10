@@ -17,4 +17,7 @@ add_executable(Ticket_System
         include/utils.h
         include/bpt.h
         include/vector.h
-        include/map.h)
+        include/map.h
+        include/order.h
+        include/ticket.h
+        include/memory_river.h)
