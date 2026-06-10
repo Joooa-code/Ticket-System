@@ -2,7 +2,6 @@
 #define TICKET_SYSTEM_VECTOR_H
 #include "exceptions.hpp"
 #include "utility.hpp"
-
 #include <climits>
 #include <cstddef>
 constexpr size_t CAP = 128;
@@ -416,17 +415,16 @@ public:
 			return iterator(data + index, this);
 		}
 
-		// move elements
-		if (siz > 0) {
+		if (index == static_cast<int>(siz)) {
+			new(data + siz) T(value);
+		} else {
 			new(data + siz) T(data[siz - 1]);
-			for (size_t i = siz - 1; i > index; --i) {
+			for (size_t i = siz - 1; i > static_cast<size_t>(index); --i) {
 				data[i] = data[i - 1];
 			}
+			data[index].~T();
+			new(data + index) T(value);
 		}
-
-		// insert new element
-	        data[index].~T();
-		new(data + index) T(value);
 		siz++;
 
 		return iterator(data + index, this);
@@ -456,7 +454,7 @@ public:
 
 		// move elements
 		for (size_t i = index; i < siz - 1; ++i) {
-		        new(data + i) T(data[i + 1]);
+			new(data + i) T(data[i + 1]);
 			data[i + 1].~T();
 		}
 
@@ -514,8 +512,5 @@ public:
 		siz--;
 	}
 };
-
-
 }
-
 #endif //TICKET_SYSTEM_VECTOR_H
