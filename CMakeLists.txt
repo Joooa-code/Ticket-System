@@ -19,5 +19,4 @@ add_executable(Ticket_System
         include/vector.h
         include/map.h
         include/order.h
-        include/ticket.h
         include/memory_river.h)
