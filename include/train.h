@@ -7,19 +7,19 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
-struct TrainId {
+struct TrainKey {
     char trainID[21];
-    TrainId() {
+    TrainKey() {
         trainID[0] = '\0';
     }
-    TrainId(const char* id) {
+    TrainKey(const char* id) {
         strncpy(trainID, id, 20);
         trainID[20] = '\0';
     }
-    bool operator<(const TrainId& other) const {
+    bool operator<(const TrainKey& other) const {
         return strcmp(trainID, other.trainID) < 0;
     }
-    bool operator==(const TrainId& other) const {
+    bool operator==(const TrainKey& other) const {
         return strcmp(trainID, other.trainID) == 0;
     }
 };
@@ -44,7 +44,7 @@ struct StationKey {
 struct StationValue {
     char trainID[21];
     int stationIdx;           // 该车次中的站序（0-based）
-    int departTimeMin;        // 离开该站的绝对分钟（每日发车后偏移）
+    int departTimeMin;        // 离开该站的绝对分钟（发车后偏移）
     int cumTime;              // 从始发站到该站的累计分钟
     int cumPrice;             // 从始发站到该站的累计票价
     StationValue():stationIdx(0), departTimeMin(0), cumTime(0), cumPrice(0) {
@@ -122,7 +122,7 @@ public:
 class TrainManager {
 private:
     MemoryRiver<Train> train_info;
-    BPlusTree<TrainId, int> train_tree;
+    BPlusTree<TrainKey, int> train_tree;
     BPlusTree<StationKey, StationValue> station_tree;
     MemoryRiver<SeatValue> seat_info;
     BPlusTree<SeatKey, int> seat_tree;
@@ -135,7 +135,7 @@ public:
     int addTrain(const char *trainID, int stationNum, int seatNum, const char stations[][31], const int prices[],
                  const char *startTime, const int travelTimes[], const int stopoverTimes[], const char *saleStart,
                  const char *saleEnd, char type) {
-        if (!train_tree.find(TrainId(trainID)).empty()) {
+        if (!train_tree.find(TrainKey(trainID)).empty()) {
             return -1;
         }
         Train t;
@@ -172,21 +172,21 @@ public:
             }
         }
         int offset = train_info.write(t);
-        train_tree.insert(TrainId(trainID), offset);
+        train_tree.insert(TrainKey(trainID), offset);
         return 0;
     }
     int deleteTrain(const char* trainID) {
-        auto res = train_tree.find(TrainId(trainID));
+        auto res = train_tree.find(TrainKey(trainID));
         if (res.empty()) return -1;
         int offset = res[0];
         Train t;
         train_info.read(t, offset);
         if (t.released) return -1;
-        train_tree.remove(TrainId(trainID), offset);
+        train_tree.remove(TrainKey(trainID), offset);
         return 0;
     }
     int releaseTrain(const char* trainID) {
-        auto res = train_tree.find(TrainId(trainID));
+        auto res = train_tree.find(TrainKey(trainID));
         if (res.empty()) return -1;
         int offset = res[0];
         Train t;
@@ -220,7 +220,7 @@ public:
     }
     void queryTrain(const char* trainID, const char* date, char* out) {
         int base_day = dateToOffset(date);
-        auto res = train_tree.find(TrainId(trainID));
+        auto res = train_tree.find(TrainKey(trainID));
         if (res.empty()) {
             sprintf(out, "-1");
             return;
@@ -311,7 +311,7 @@ public:
     }
     // 获取车次信息（返回指针，需手动delete）
     Train* getTrain(const char* trainID) {
-        auto res = train_tree.find(TrainId(trainID));
+        auto res = train_tree.find(TrainKey(trainID));
         if (res.empty()) return nullptr;
         Train* t = new Train();
         train_info.read(*t, res[0]);
