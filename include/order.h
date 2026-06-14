@@ -524,6 +524,23 @@ public:
               << " -> " << best.t2.to << ' ' << arriveDate2 << ' ' << arriveTime2
               << ' ' << best.t2.price << ' ' << best.t2.seat_num << '\n';
     }
+    void clean() {
+        // 清空 MemoryRiver 文件
+        order_storage.initialise();   // 重新初始化为空文件
+        order_storage.write_info(0, 1);  // 重置时间戳
+        // 析构 B+ 树
+        order_tree.~BPlusTree();
+        waiting_tree.~BPlusTree();
+        // 删除文件
+        std::remove("order_leaf");
+        std::remove("order_tree");
+        std::remove("waiting_leaf");
+        std::remove("waiting_tree");
+        // 重建 B+ 树
+        new (&order_tree) BPlusTree<OrderKey, int>("order_leaf", "order_tree");
+        new (&waiting_tree) BPlusTree<WaitingKey, int>("waiting_leaf", "waiting_tree");
+        global_time = 0;
+    }
 };
 
 #endif //TICKET_SYSTEM_ORDER_H

@@ -328,6 +328,26 @@ public:
     sjtu::vector<StationValue> getStationTrains(const char* station) {
         return station_tree.find(StationKey(station));
     }
+    void clean() {
+        // 清空 MemoryRiver 文件
+        train_info.initialise();
+        seat_info.initialise();
+        // 析构 B+ 树
+        train_tree.~BPlusTree();
+        station_tree.~BPlusTree();
+        seat_tree.~BPlusTree();
+        // 删除文件
+        std::remove("train_leaf");
+        std::remove("train_tree");
+        std::remove("station_leaf");
+        std::remove("station_tree");
+        std::remove("seat_leaf");
+        std::remove("seat_tree");
+        // 重建 B+ 树
+        new (&train_tree) BPlusTree<TrainKey, int>("train_leaf", "train_tree");
+        new (&station_tree) BPlusTree<StationKey, StationValue>("station_leaf", "station_tree");
+        new (&seat_tree) BPlusTree<SeatKey, int>("seat_leaf", "seat_tree");
+    }
 };
 
 #endif //TICKET_SYSTEM_TRAIN_H

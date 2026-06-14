@@ -1,10 +1,10 @@
 #ifndef TICKET_SYSTEM_VECTOR_H
 #define TICKET_SYSTEM_VECTOR_H
-#include "exceptions.hpp"
-#include "utility.hpp"
+#include "exceptions.h"
+#include "utility.h"
 #include <climits>
 #include <cstddef>
-constexpr size_t CAP = 128;
+constexpr size_t CAP = 64;
 namespace sjtu
 {
 /**

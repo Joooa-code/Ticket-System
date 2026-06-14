@@ -158,6 +158,18 @@ public:
         sprintf(out, "%s %s %s %d", target.username, target.name, target.mailAddr, target.privilege);
         return 0;
     }
+    void clean() {
+        // 清空在线列表
+        login_list.clear();
+        // 析构 B+ 树
+        user_map.~BPlusTree();
+        // 删除文件
+        std::remove("user_tree");
+        std::remove("user_leaf");
+        // 重建 B+ 树
+        new (&user_map) BPlusTree<Username, User>("user_leaf", "user_tree");
+    }
+
 };
 
 #endif //TICKET_SYSTEM_USER_H
