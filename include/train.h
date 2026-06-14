@@ -132,8 +132,8 @@ public:
     station_tree("station_leaf", "station_tree"),
     seat_info("seat_data"),
     seat_tree("seat_leaf", "seat_tree"){}
-    int addTrain(const char *trainID, int stationNum, int seatNum, const char stations[][31], const int prices[],
-                 const char *startTime, const int travelTimes[], const int stopoverTimes[], const char *saleStart,
+    int addTrain(const char *trainID, int stationNum, int seatNum, const char stations[][31], const int* prices,
+                 const char *startTime, const int* travelTimes, const int* stopoverTimes, const char *saleStart,
                  const char *saleEnd, char type) {
         if (!train_tree.find(TrainKey(trainID)).empty()) {
             return -1;
@@ -218,65 +218,66 @@ public:
         }
         return 0;
     }
-    void queryTrain(const char* trainID, const char* date, char* out) {
-        int base_day = dateToOffset(date);
-        auto res = train_tree.find(TrainKey(trainID));
-        if (res.empty()) {
-            sprintf(out, "-1");
-            return;
-        }
-        Train t;
-        train_info.read(t, res[0]);
-        if (base_day < t.saleStart || base_day > t.saleEnd) {
-            sprintf(out, "-1");
-            return;
-        }
-        char buffer[4096];
-        char* ptr = buffer;
-        ptr += sprintf(ptr, "%s %c\n", t.trainID, t.type);
-        int baseAbs = base_day * 1440 + t.startTimeMinutes;
-        for (int i = 0; i < t.stationNum; ++i) {
-            char arriveDate[12] = "xx-xx", arriveTime[9] = "xx:xx";
-            char leaveDate[12] = "xx-xx", leaveTime[9] = "xx:xx";
-            int price = t.prefixPrices[i];
-            int seat = t.seatNum;
-            if (i > 0) {
-                int arriveAbs = baseAbs + t.arriveTimes[i];
-                int day = arriveAbs / 1440;
-                int minute = arriveAbs % 1440;
-                offsetToDate(day, arriveDate);
-                sprintf(arriveTime, "%02d:%02d", minute/60, minute%60);
-            }
-            if (i < t.stationNum-1) {
-                int leaveAbs = baseAbs + t.leaveTimes[i];
-                int day = leaveAbs / 1440;
-                int minute = leaveAbs % 1440;
-                offsetToDate(day, leaveDate);
-                sprintf(leaveTime, "%02d:%02d", minute/60, minute%60);
-                if (t.released) {
-                    SeatKey sk(t.trainID, base_day);
-                    auto seatRes = seat_tree.find(sk);
-                    if (!seatRes.empty()) {
-                        SeatValue sv;
-                        seat_info.read(sv, seatRes[0]);
-                        seat = sv.seat[i];
-                    }
-                }
-            } else {
-                strcpy(leaveDate, "xx-xx");
-                strcpy(leaveTime, "xx:xx");
-                seat = -1;
-            }
-            if (i == t.stationNum-1) {
-                ptr += sprintf(ptr, "%s %s %s -> %s %s %d x\n",
-                               t.stations[i], arriveDate, arriveTime, leaveDate, leaveTime, price);
-            } else {
-                ptr += sprintf(ptr, "%s %s %s -> %s %s %d %d\n",
-                               t.stations[i], arriveDate, arriveTime, leaveDate, leaveTime, price, seat);
-            }
-        }
-        strcpy(out, buffer);
+    void queryTrain(const char* trainID, const char* date) {
+    int base_day = dateToOffset(date);
+    auto res = train_tree.find(TrainKey(trainID));
+    if (res.empty()) {
+        std::cout << "-1\n";
+        return;
     }
+    Train t;
+    train_info.read(t, res[0]);
+    if (base_day < t.saleStart || base_day > t.saleEnd) {
+        std::cout << "-1\n";
+        return;
+    }
+    // 输出第一行
+    std::cout << t.trainID << ' ' << t.type << '\n';
+    int baseAbs = base_day * 1440 + t.startTimeMinutes;
+    for (int i = 0; i < t.stationNum; ++i) {
+        char arriveDate[12] = "xx-xx", arriveTime[9] = "xx:xx";
+        char leaveDate[12] = "xx-xx", leaveTime[9] = "xx:xx";
+        int price = t.prefixPrices[i];
+        int seat = t.seatNum;
+        if (i > 0) {
+            int arriveAbs = baseAbs + t.arriveTimes[i];
+            int day = arriveAbs / 1440;
+            int minute = arriveAbs % 1440;
+            offsetToDate(day, arriveDate);
+            sprintf(arriveTime, "%02d:%02d", minute/60, minute%60);
+        }
+        if (i < t.stationNum-1) {
+            int leaveAbs = baseAbs + t.leaveTimes[i];
+            int day = leaveAbs / 1440;
+            int minute = leaveAbs % 1440;
+            offsetToDate(day, leaveDate);
+            sprintf(leaveTime, "%02d:%02d", minute/60, minute%60);
+            if (t.released) {
+                SeatKey sk(t.trainID, base_day);
+                auto seatRes = seat_tree.find(sk);
+                if (!seatRes.empty()) {
+                    SeatValue sv;
+                    seat_info.read(sv, seatRes[0]);
+                    seat = sv.seat[i];
+                }
+            }
+        } else {
+            strcpy(leaveDate, "xx-xx");
+            strcpy(leaveTime, "xx:xx");
+            seat = -1;
+        }
+        // 输出每一站的信息
+        if (i == t.stationNum-1) {
+            std::cout << t.stations[i] << ' ' << arriveDate << ' ' << arriveTime
+                      << " -> " << leaveDate << ' ' << leaveTime
+                      << ' ' << price << " x\n";
+        } else {
+            std::cout << t.stations[i] << ' ' << arriveDate << ' ' << arriveTime
+                      << " -> " << leaveDate << ' ' << leaveTime
+                      << ' ' << price << ' ' << seat << '\n';
+        }
+    }
+}
     // 余票查询
     int getRemainSeat(const char* trainID, int dateOffset, int segmentIdx) {
         SeatKey key(trainID, dateOffset);
