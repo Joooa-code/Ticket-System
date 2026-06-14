@@ -25,6 +25,10 @@ struct Username {
     Username() {
         username[0] = '\0';
     }
+    Username(const Username& other){
+        strncpy(username, other.username, 20);
+        username[20] = '\0';
+    }
     Username(const char* name) {
         strncpy(username, name, 20);
         username[20] = '\0';
@@ -43,11 +47,8 @@ class UserManager {
 private:
     BPlusTree<Username, User> user_map;
     sjtu::map<Username, int> login_list;  // 用户名->权限
-    int user_count = 0;
 public:
-    UserManager() {
-        user_map("user_leaf", "user_tree");
-    }
+    UserManager():user_map("user_leaf", "user_tree") {}
     bool isOnline(const char* username) {
         return login_list.find(Username(username)) != login_list.end();
     }
@@ -61,7 +62,8 @@ public:
         if (!user_map.find(Username(username)).empty()) return -1;
 
         // 创建第一个用户
-        if (user_count == 0) {
+        // 补充empty()实现
+        if (user_map.empty()) {
             User newUser;
             strncpy(newUser.username, username, 20);
             newUser.username[20] = '\0';
@@ -73,7 +75,6 @@ public:
             newUser.mailAddr[30] = '\0';
             newUser.privilege = 10;
             user_map.insert(Username(username), newUser);
-            ++user_count;
             return 0;
         }
 
@@ -92,7 +93,6 @@ public:
         newUser.mailAddr[30] = '\0';
         newUser.privilege = privilege;
         user_map.insert(Username(username), newUser);
-        ++user_count;
         return 0;
     }
     int login(const char* username, const char* password) {
@@ -139,7 +139,7 @@ public:
             target.password[30] = '\0';
         }
         if (newName) {
-            strncpy(target.name, newName, 50);
+            strncpy(target.name, newName, 15);
             target.name[15] = '\0';
         }
         if (newMail) {
@@ -158,8 +158,6 @@ public:
         sprintf(out, "%s %s %s %d", target.username, target.name, target.mailAddr, target.privilege);
         return 0;
     }
-
-
 };
 
 #endif //TICKET_SYSTEM_USER_H
