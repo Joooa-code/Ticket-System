@@ -16,6 +16,9 @@ public:
     bool operator<(const User& other) const {
         return strcmp(username, other.username) < 0;
     }
+    bool operator>(const User& other) const {
+        return strcmp(username, other.username) > 0;
+    }
     bool operator==(const User& other) const {
         return strcmp(username, other.username) == 0;
     }

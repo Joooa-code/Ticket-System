@@ -19,6 +19,9 @@ struct TrainKey {
     bool operator<(const TrainKey& other) const {
         return strcmp(trainID, other.trainID) < 0;
     }
+    bool operator>(const TrainKey& other) const {
+        return strcmp(trainID, other.trainID) > 0;
+    }
     bool operator==(const TrainKey& other) const {
         return strcmp(trainID, other.trainID) == 0;
     }
@@ -35,7 +38,10 @@ struct StationKey {
     bool operator<(const StationKey& other) const {
         int op = strcmp(stationID, other.stationID);
         return op < 0;
-
+    }
+    bool operator>(const StationKey& other) const {
+        int op = strcmp(stationID, other.stationID);
+        return op > 0;
     }
     bool operator==(const StationKey& other) const {
         return strcmp(stationID, other.stationID) == 0;
@@ -71,6 +77,11 @@ struct SeatKey {
         int cmp = strcmp(trainID, other.trainID);
         if (cmp != 0) return cmp < 0;
         return dateOffset < other.dateOffset;
+    }
+    bool operator>(const SeatKey& other) const {
+        int cmp = strcmp(trainID, other.trainID);
+        if (cmp != 0) return cmp > 0;
+        return dateOffset > other.dateOffset;
     }
     bool operator==(const SeatKey& other) const {
         return strcmp(trainID, other.trainID) == 0 && dateOffset == other.dateOffset;

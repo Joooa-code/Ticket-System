@@ -32,6 +32,11 @@ struct OrderKey {
     bool operator==(const OrderKey &other) const {
         return strcmp(username, other.username) == 0 && time == other.time;
     }
+    bool operator>(const OrderKey &other) const {
+        int cmp = strcmp(username, other.username);
+        if (cmp != 0) return cmp > 0;
+        return time > other.time;
+    }
 };
 struct Ticket {
     char trainID[21];
@@ -70,6 +75,12 @@ struct WaitingKey {
         if (cmp != 0) return cmp < 0;
         if (leave_date != other.leave_date) return leave_date < other.leave_date;
         return timestamp < other.timestamp;   // 时间戳小的优先
+    }
+    bool operator>(const WaitingKey& other) const {
+        int cmp = strcmp(trainID, other.trainID);
+        if (cmp != 0) return cmp > 0;
+        if (leave_date != other.leave_date) return leave_date > other.leave_date;
+        return timestamp > other.timestamp;
     }
     bool operator==(const WaitingKey& other) const {
         return strcmp(trainID, other.trainID) == 0 &&

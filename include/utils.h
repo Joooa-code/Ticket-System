@@ -1,9 +1,6 @@
 #ifndef TICKET_SYSTEM_UTILS_H
 #define TICKET_SYSTEM_UTILS_H
 #include <cstdio>
-// 字符串分割（按 '|'）
-void split(const char* src, char delim, ArrayList<char*>& out);
-
 // 时间转换 "hh:mm" -> 分钟
 int timeToMinutes(const char* date);
 inline int daysInMonth(int month) {
