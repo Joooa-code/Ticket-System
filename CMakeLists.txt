@@ -7,16 +7,13 @@ include_directories(src)
 
 add_executable(Ticket_System
         src/main.cpp
-        src/system.cpp
-        include/system.h
-        src/train.cpp
         include/train.h
-        src/user.cpp
         include/user.h
-        src/utils.cpp
         include/utils.h
         include/bpt.h
         include/vector.h
         include/map.h
         include/order.h
-        include/memory_river.h)
+        include/memory_river.h
+        include/utility.h
+        include/exceptions.h)

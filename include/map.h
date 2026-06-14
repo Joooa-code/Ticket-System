@@ -2,8 +2,8 @@
 #define TICKET_SYSTEM_MAP_H
 #include <functional>
 #include <cstddef>
-#include "utility.hpp"
-#include "exceptions.hpp"
+#include "utility.h"
+#include "exceptions.h"
 
 namespace sjtu {
 
