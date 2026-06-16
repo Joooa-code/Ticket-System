@@ -3,7 +3,7 @@ project(Ticket_System)
 
 set(CMAKE_CXX_STANDARD 20)
 
-include_directories(src)
+include_directories(include src)
 
 add_executable(Ticket_System
         src/main.cpp
