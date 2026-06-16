@@ -32,6 +32,9 @@ struct OrderKey {
     bool operator==(const OrderKey &other) const {
         return strcmp(username, other.username) == 0 && time == other.time;
     }
+    bool operator!=(const OrderKey &other) const {
+        return !(*this == other);
+    }
     bool operator>(const OrderKey &other) const {
         int cmp = strcmp(username, other.username);
         if (cmp != 0) return cmp > 0;
@@ -86,6 +89,9 @@ struct WaitingKey {
         return strcmp(trainID, other.trainID) == 0 &&
                leave_date == other.leave_date &&
                timestamp == other.timestamp;
+    }
+    bool operator!=(const WaitingKey& other) const {
+        return !(*this == other);
     }
 };
 

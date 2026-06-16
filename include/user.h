@@ -42,6 +42,9 @@ struct Username {
     bool operator>(const Username& other) const {
         return strcmp(username, other.username) > 0;
     }
+    bool operator!=(const Username& other) const {
+        return strcmp(username, other.username) != 0;
+    }
     bool operator==(const Username& other) const {
         return strcmp(username, other.username) == 0;
     }

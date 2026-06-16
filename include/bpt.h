@@ -275,7 +275,7 @@ private:
             return;
         }
         auto* inode = static_cast<InternalNode<KeyType, ValueType>*>(node);
-        out.write(&inode->type, 1);
+        out.write(reinterpret_cast<const char*>(&inode->type), 1);
         out.write(reinterpret_cast<const char*>(&inode->count), sizeof(int));
         for (int i = 0; i < inode->count; ++i) {
             out.write(reinterpret_cast<const char*>(&inode->keys[i].key), sizeof(KeyType));
