@@ -9,6 +9,7 @@
 #include "user.h"
 #include "memory_river.h"
 #include "utils.h"
+#include "utility.h"
 #include <cstring>
 #include <climits>
 #include <iostream>
@@ -94,7 +95,6 @@ struct WaitingKey {
         return !(*this == other);
     }
 };
-
 class OrderManager {
 private:
     MemoryRiver<Order> order_storage;
@@ -104,14 +104,15 @@ private:
     void fulfillWaiting(TrainManager& trainMgr, const char* trainID, int dateOffset) {
         WaitingKey start(trainID, dateOffset, 0);
         WaitingKey end(trainID, dateOffset, INT_MAX);
-        sjtu::vector<KeyValue<WaitingKey, int>> range;
-        waiting_tree.rangeQuery(start, end, range);
-        for (const auto& kv : range) {
-            int offset = kv.value;
+        sjtu::vector<WaitingKey> keys;
+        sjtu::vector<int> values;
+        waiting_tree.rangeQuery(start, end, keys, values);
+        for (int i = 0; i < keys.size(); ++i) {
+            int offset = values[i];
             Order ord;
             order_storage.read(ord, offset);
             if (ord.status != PENDING) {
-                waiting_tree.remove(kv.key, offset);
+                waiting_tree.remove(keys[i], offset);
                 continue;
             }
             const Ticket& tic = ord.ticket_info;
@@ -140,7 +141,7 @@ private:
             if (ok) {
                 ord.status = SUCCESS;
                 order_storage.update(ord, offset);
-                waiting_tree.remove(kv.key, offset);
+                waiting_tree.remove(keys[i], offset);
             }
             delete train;
         }
@@ -180,13 +181,14 @@ public:
     void query_order(const char* username) {
         OrderKey start(username, INT_MIN);
         OrderKey end(username, 0);
-        sjtu::vector<KeyValue<OrderKey, int>> range;
-        order_tree.rangeQuery(start, end, range);
-        std::cout << range.size() << '\n';
+        sjtu::vector<OrderKey> keys;
+        sjtu::vector<int> values;
+        order_tree.rangeQuery(start, end, keys, values);
+        std::cout << keys.size() << '\n';
         // 遍历输出每个订单
-        for (size_t i = 0; i < range.size(); ++i) {
+        for (size_t i = 0; i < keys.size(); ++i) {
             Order ord;
-            order_storage.read(ord, range[i].value);
+            order_storage.read(ord, values[i]);
             const char* statusStr = (ord.status == SUCCESS) ? "success" :
                                     (ord.status == PENDING) ? "pending" : "refunded";
             char leaveDate[12], leaveTime[9], arriveDate[12], arriveTime[9];
@@ -203,14 +205,14 @@ public:
     void refund_ticket(TrainManager& trainMgr, const char* username, int n) {
         OrderKey start(username, INT_MIN);
         OrderKey end(username, 0);
-        sjtu::vector<KeyValue<OrderKey, int>> range;
-        order_tree.rangeQuery(start, end, range);
-        if (n < 1 || n > (int)range.size()) {
+        sjtu::vector<OrderKey> keys;
+        sjtu::vector<int> values;
+        order_tree.rangeQuery(start, end, keys, values);
+        if (n < 1 || n > (int)keys.size()) {
             std::cout << -1 << '\n';
             return;
         }
-        const auto& kv = range[n - 1];
-        int offset = kv.value;
+        int offset = values[n - 1];
         Order ord;
         order_storage.read(ord, offset);
         // 订单无效

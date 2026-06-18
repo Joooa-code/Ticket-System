@@ -1,538 +1,550 @@
 #ifndef TICKET_SYSTEM_BPT_H
 #define TICKET_SYSTEM_BPT_H
-
 #include <iostream>
 #include <fstream>
+#include <string>
+#include <cstring>
 #include <cstdint>
 #include "vector.h"
 
-const int MAX_KEYS = 40;
-const int MIN_KEYS = MAX_KEYS / 2;
 const size_t BLOCK_SIZE = 4096;          // 磁盘块大小
-
 enum NodeType : char {
-    INTERNAL_NODE = 'I',
-    LEAF_NODE = 'L'
+	INTERNAL_NODE = 'I',
+	LEAF_NODE = 'L'
 };
-
-// 键值对结构
-template<typename KeyType, typename ValueType>
-struct KeyValue {
-    KeyType key;
-    ValueType value;
-
-    bool operator<(const KeyValue& other) const {
-        if (key != other.key) return key < other.key;
-        return value < other.value;
-    }
-    bool operator==(const KeyValue& other) const {
-        return key == other.key && value == other.value;
-    }
-    bool operator<=(const KeyValue& other) const {
-        return *this < other || *this == other;
-    }
-};
-
-// 二分查找辅助函数
-template<typename KeyType, typename ValueType>
-int lower_bound(const KeyValue<KeyType, ValueType>& kv,
-                const sjtu::vector<KeyValue<KeyType, ValueType>>& vec) {
-    int lo = 0, hi = vec.size();
-    while (lo < hi) {
-        int mid = lo + (hi - lo) / 2;
-        if (vec[mid] < kv) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo;
-}
-
-template<typename KeyType, typename ValueType>
-int upper_bound(const KeyValue<KeyType, ValueType>& kv,
-                const sjtu::vector<KeyValue<KeyType, ValueType>>& vec) {
-    int lo = 0, hi = vec.size();
-    while (lo < hi) {
-        int mid = lo + (hi - lo) / 2;
-        if (vec[mid] <= kv) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo;
-}
-
-class Node {
-public:
-    NodeType type;
-    int count;
-    Node(NodeType t, int c = 0) : type(t), count(c) {}
-    virtual ~Node() = default;
-};
-
-// 叶子节点模板
-template<typename KeyType, typename ValueType>
-class LeafNode : public Node {
-public:
-    sjtu::vector<KeyValue<KeyType, ValueType>> entries;
-    uint64_t fileOffset;       // 在叶子文件中的偏移
-    uint64_t prevOffset;
-    uint64_t nextOffset;
-
-    LeafNode() : Node(LEAF_NODE, 0), fileOffset(0), prevOffset(0), nextOffset(0) {}
-
-    // 写入叶子文件（完整存储）
-    void writeLeaf(std::ostream& out) const {
-        out.write(reinterpret_cast<const char*>(&count), sizeof(int));
-        out.write(reinterpret_cast<const char*>(&prevOffset), sizeof(uint64_t));
-        out.write(reinterpret_cast<const char*>(&nextOffset), sizeof(uint64_t));
-        for (int i = 0; i < count; ++i) {
-            out.write(reinterpret_cast<const char*>(&entries[i].key), sizeof(KeyType));
-            out.write(reinterpret_cast<const char*>(&entries[i].value), sizeof(ValueType));
-        }
-    }
-
-    // 写入树文件（仅类型和偏移）
-    void writeTreeRef(std::ostream& out) const {
-        char type = LEAF_NODE;
-        out.write(&type, 1);
-        out.write(reinterpret_cast<const char*>(&fileOffset), sizeof(uint64_t));
-    }
-
-    // 从叶子文件读取
-    void readLeaf(std::istream& in) {
-        fileOffset = in.tellg();
-        in.read(reinterpret_cast<char*>(&count), sizeof(int));
-        in.read(reinterpret_cast<char*>(&prevOffset), sizeof(uint64_t));
-        in.read(reinterpret_cast<char*>(&nextOffset), sizeof(uint64_t));
-        entries.clear();
-        for (int i = 0; i < count; ++i) {
-            KeyValue<KeyType, ValueType> kv;
-            in.read(reinterpret_cast<char*>(&kv.key), sizeof(KeyType));
-            in.read(reinterpret_cast<char*>(&kv.value), sizeof(ValueType));
-            entries.push_back(kv);
-        }
-    }
-
-    // 插入，返回是否成功（不重复）
-    bool insert(const KeyValue<KeyType, ValueType>& kv) {
-        int pos = lower_bound(kv, entries);
-        if (pos < count && entries[pos] == kv) return false;
-        entries.insert(entries.begin() + pos, kv);
-        ++count;
-        return true;
-    }
-
-    // 删除，返回是否成功
-    bool remove(const KeyValue<KeyType, ValueType>& kv) {
-        int pos = lower_bound(kv, entries);
-        if (pos >= count || !(entries[pos] == kv)) return false;
-        entries.erase(entries.begin() + pos);
-        --count;
-        return true;
-    }
-
-    // 分裂，返回新节点
-    LeafNode* split() {
-        LeafNode* newNode = new LeafNode();
-        int mid = count / 2;
-        for (int i = mid; i < count; ++i)
-            newNode->entries.push_back(entries[i]);
-        newNode->count = newNode->entries.size();
-        while ((int)entries.size() > mid)
-            entries.pop_back();
-        count = mid;
-        return newNode;
-    }
-
-    KeyValue<KeyType, ValueType> getFirstEntry() const {
-        if (count == 0) return KeyValue<KeyType, ValueType>{};
-        return entries[0];
-    }
-};
-
-// 内部节点模板（仅存在于内存，树文件中递归存储）
-template<typename KeyType, typename ValueType>
-class InternalNode : public Node {
-public:
-    sjtu::vector<KeyValue<KeyType, ValueType>> keys;
-    sjtu::vector<Node*> children;
-
-    InternalNode() : Node(INTERNAL_NODE, 0) {}
-
-    Node* findChild(const KeyValue<KeyType, ValueType>& kv) const {
-        return children[upper_bound(kv, keys)];
-    }
-
-    void insertKey(const KeyValue<KeyType, ValueType>& kv,
-                   Node* left, Node* right, int pos) {
-        keys.insert(keys.begin() + pos, kv);
-        children[pos] = left;
-        children.insert(children.begin() + pos + 1, right);
-        ++count;
-    }
-
-    // 分裂，提升的键存入 p_key
-    InternalNode* split(KeyValue<KeyType, ValueType>& p_key) {
-        InternalNode* newNode = new InternalNode();
-        int mid = count / 2;
-        p_key = keys[mid];
-        for (int i = mid + 1; i < count; ++i)
-            newNode->keys.push_back(keys[i]);
-        for (int i = mid + 1; i <= count; ++i)
-            newNode->children.push_back(children[i]);
-        newNode->count = newNode->keys.size();
-        while ((int)keys.size() > mid) keys.pop_back();
-        while ((int)children.size() > mid + 1) children.pop_back();
-        count = mid;
-        return newNode;
-    }
-};
-
-// B+树主模板
-template<typename KeyType, typename ValueType>
+template<typename Key, typename Value>
 class BPlusTree {
-private:
-    std::fstream leaf_file;
-    std::fstream tree_file;
-    std::string leaf_name;
-    std::string tree_name;
-    Node* root;
-    uint64_t leafHead;
-    uint64_t leafTail;
+	struct KeyValue {
+		Key key;
+		Value value;
+		bool operator<(const KeyValue& other) const {
+			if (key != other.key) return key < other.key;
+			return value < other.value;
+		}
+		bool operator==(const KeyValue& other) const {
+			return key == other.key && value == other.value;
+		}
+		bool operator<=(const KeyValue& other) const {
+			return *this < other || *this == other;
+		}
+	};
+	// 计算叶子节点条目数
+	static const int LEAF_MAX_ENTRIES =
+		(BLOCK_SIZE - sizeof(char) - sizeof(int) - sizeof(uint64_t) * 3) / sizeof(KeyValue);
 
-    // 叶子文件头操作
-    void writeLeafHeader() {
-        leaf_file.seekp(0);
-        leaf_file.write(reinterpret_cast<const char*>(&leafHead), sizeof(uint64_t));
-        leaf_file.write(reinterpret_cast<const char*>(&leafTail), sizeof(uint64_t));
-        // 填充至块大小（可选）
-        leaf_file.seekp(BLOCK_SIZE);
-    }
-    void readLeafHeader() {
-        leaf_file.seekg(0);
-        leaf_file.read(reinterpret_cast<char*>(&leafHead), sizeof(uint64_t));
-        leaf_file.read(reinterpret_cast<char*>(&leafTail), sizeof(uint64_t));
-        leaf_file.seekg(BLOCK_SIZE);
-    }
 
-    // 从文件读取叶子节点
-    LeafNode<KeyType, ValueType>* readLeafNode(uint64_t offset) {
-        leaf_file.seekg(offset);
-        LeafNode<KeyType, ValueType>* leaf = new LeafNode<KeyType, ValueType>();
-        leaf->readLeaf(leaf_file);
-        return leaf;
-    }
+	struct LeafDisk {
+		char type;
+		int count;
+		uint64_t fileOffset;
+		uint64_t prev;
+		uint64_t next;
+		KeyValue entries[LEAF_MAX_ENTRIES];
+	};
+	class Node {
+	public:
+		NodeType type;
+		int count;
+		Node(NodeType t, int c = 0) : type(t), count(c) {}
+		virtual ~Node() = default;
+	};
+	class LeafNode:public Node {
+	public:
+		uint64_t fileOffset;
+		uint64_t prevOffset;             // 前驱叶子偏移
+		uint64_t nextOffset;             // 后继叶子偏移
+		KeyValue entries[LEAF_MAX_ENTRIES];
+		int l_bound(const KeyValue& kv, const LeafNode* leaf) {
+			int low = 0, high = leaf->count;
+			while (low < high) {
+				int mid = low + (high - low) / 2;
+				if (leaf->entries[mid] < kv) low = mid + 1;
+				else high = mid;
+			}
+			return low;
+		}
+		LeafNode() : Node(LEAF_NODE, 0), fileOffset(0), prevOffset(0), nextOffset(0) {}
+		// 检查重复的插入，如果溢出，将溢出的值存入tem
+		bool insert(const KeyValue& kv, KeyValue& tem) {
+			int pos = l_bound(kv, this);
+			if (pos < this->count && entries[pos] == kv) {
+				return false;
+			}
+			// 节点未满，直接插入
+			if (this->count < LEAF_MAX_ENTRIES) {
+				// 将 [pos, count-1] 的元素后移一位
+				for (int i = this->count; i > pos; --i) {
+					entries[i] = entries[i - 1];
+				}
+				entries[pos] = kv;
+				this->count++;
+				return false;  // 未溢出
+			}
+			if (pos == this->count) {
+				tem = kv;
+				return true;
+			}
+			else {
+				tem = entries[this->count - 1];
+				for (int i = this->count - 1; i > pos; --i) {
+					entries[i] = entries[i - 1];
+				}
+				entries[pos] = kv;
+				return true;
+			}
+		}
+		// 删除，若失败(未找到)返回false
+		bool remove(const KeyValue& kv) {
+			// 二分查找第一个 >= kv 的位置
+			int pos = l_bound(kv, this);
+			if (pos < this->count && entries[pos] == kv) {
+				for (int i = pos; i < this->count - 1; ++i) {
+					entries[i] = entries[i + 1];
+				}
+				this->count--;
+				return true;
+			}
+			return false;
+		}
+		// 不更新所有offset的分裂
+		LeafNode* split() {
+			LeafNode* newNode = new LeafNode();
+			int mid = this->count / 2;
+			for (int i = mid; i < this->count; ++i) {
+				newNode->entries[i - mid] = this->entries[i];
+			}
+			newNode->count = this->count - mid;   // 右节点数量
+			this->count = mid;                   // 左节点数量
+			return newNode;
+		}
+		KeyValue getFirstEntry() const {
+			if (this->count == 0) return KeyValue{Key(), Value()};
+			return entries[0];
+		}
+	};
 
-    // 创建一个仅知道偏移的叶子节点占位符（用于树节点中的叶子引用）
-    LeafNode<KeyType, ValueType>* createLeafStub(uint64_t offset) {
-        LeafNode<KeyType, ValueType>* leaf = new LeafNode<KeyType, ValueType>();
-        leaf->fileOffset = offset;
-        return leaf;
-    }
+	// 内部结点条目数
+	static const int INTERNAL_MAX_KEYS =
+		(BLOCK_SIZE - sizeof(char) - sizeof(int)) / (sizeof(Key) + sizeof(Value));
 
-    // 分配新叶子节点（追加到叶子文件末尾，对齐块边界）
-    uint64_t allocateLeaf(LeafNode<KeyType, ValueType>* leaf) {
-        leaf_file.seekp(0, std::ios::end);
-        uint64_t offset = leaf_file.tellp();
-        if (offset % BLOCK_SIZE != 0) {
-            offset = (offset + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE;
-            leaf_file.seekp(offset);
-        }
-        leaf->fileOffset = offset;
-        leaf->prevOffset = leafTail;
-        leaf->nextOffset = 0;
-        leaf->writeLeaf(leaf_file);
-        leaf_file.flush();
+	class InternalNode:public Node {
+	public:
+		KeyValue keys[INTERNAL_MAX_KEYS];
+		Node* children[INTERNAL_MAX_KEYS + 1];
+		InternalNode() : Node(INTERNAL_NODE, 0) {}
+		// 寻找第一个 > kv的位置
+		int u_bound(const KeyValue& kv, const InternalNode* node) {
+			int low = 0, high = node->count;
+			while (low < high) {
+				int mid = low + (high - low) / 2;
+				if (node->keys[mid] <= kv) low = mid + 1;
+				else high = mid;
+			}
+			return low;
+		}
+		// 寻找可能存在kv的结点
+		Node* findChild(const KeyValue& kv) {
+			return children[u_bound(kv, this)];
+		}
+		// 在pos位置加入一个kv,将溢出的键值对存入tem,溢出的子指针存入temp,返回是否溢出
+		bool insertKey(const KeyValue& kv, Node* left, Node* right, int pos, KeyValue& tem, Node*& temp) {
+			if (this->count >= INTERNAL_MAX_KEYS) {
+				if (pos == INTERNAL_MAX_KEYS) {
+					children[INTERNAL_MAX_KEYS] = left;
+					tem = kv;
+					temp = right;
+					return true;
+				}
+				else {
+					tem = keys[INTERNAL_MAX_KEYS - 1];
+					for (int i = INTERNAL_MAX_KEYS - 2; i >= pos; --i) {
+						keys[i + 1] = keys[i];
+					}
+					keys[pos] = kv;
+					temp = children[INTERNAL_MAX_KEYS];
+					children[pos] = left;
+					for (int i = INTERNAL_MAX_KEYS - 1; i > pos; --i) {
+						children[i + 1] = children[i];
+					}
+					children[pos + 1] = right;
+					return true;
+				}
+			}
+			for (int i = this->count - 1; i >= pos; --i) {
+				keys[i + 1] = keys[i];
+			}
+			keys[pos] = kv;
+			children[pos] = left;
+			for (int i = this->count; i > pos; --i) {
+				children[i + 1] = children[i];
+			}
+			children[pos + 1] = right;
+			++this->count;
+			return false;
+		}
+		// 分裂内部结点，新的根存入p_key
+		InternalNode* split(KeyValue& p_key) {
+			InternalNode* newNode = new InternalNode();
+			int mid = this->count / 2;
+			p_key = keys[mid];
+			for (int i = mid + 1; i < this->count; ++i) {
+				newNode->keys[i - mid - 1] = keys[i];
+			}
+			for (int i = mid + 1; i <= this->count; ++i) {
+				newNode->children[i - mid - 1] = children[i];
+			}
+			newNode->count = this->count - mid - 1;
+			this->count = mid;
+			return newNode;
+		}
+	};
 
-        if (leafHead == 0) {
-            leafHead = leafTail = offset;
-        } else {
-            // 更新原尾节点的 nextOffset
-            LeafNode<KeyType, ValueType>* tail = readLeafNode(leafTail);
-            tail->nextOffset = offset;
-            leaf_file.seekp(leafTail);
-            tail->writeLeaf(leaf_file);
-            delete tail;
-            leafTail = offset;
-        }
-        writeLeafHeader();
-        return offset;
-    }
+	std::fstream leaf_file;  // 叶子结点文件
+	std::fstream tree_file;  // 树文件
+	std::string leaf_name;  // 叶子文件名
+	std::string tree_name;  // 树文件名
+	Node* root;  // 树根
+	uint64_t leafHead;  // 叶子链表头
+	uint64_t leafTail;  // 叶子链表尾
 
-    // 更新叶子节点
-    void updateLeaf(LeafNode<KeyType, ValueType>* leaf) {
-        if (leaf->fileOffset == 0)
-            allocateLeaf(leaf);
+	// 向叶子文件写入叶子结点
+	void writeLeaf_leaf(const LeafNode* node) {
+		LeafDisk disk;
+		disk.type = LEAF_NODE;
+		disk.count = node->count;
+		disk.fileOffset = node->fileOffset;
+		disk.prev = node->prevOffset;
+		disk.next = node->nextOffset;
+
+		for (int i = 0; i < node->count; ++i)
+			disk.entries[i] = node->entries[i];
+
+		leaf_file.write(reinterpret_cast<char*>(&disk), sizeof(disk));
+	}
+	// 向树文件写入叶子结点
+	void writeLeaf_tree(const LeafNode* node) {
+		char type = LEAF_NODE;
+		tree_file.write(&type, 1);
+		tree_file.write(reinterpret_cast<const char*>(&node->fileOffset), sizeof(uint64_t));
+	}
+	// 从叶子文件中读入叶子结点
+	void readLeaf_leaf(LeafNode* node) {
+		LeafDisk disk;
+		leaf_file.read(reinterpret_cast<char*>(&disk), sizeof(disk));
+		node->fileOffset = disk.fileOffset;
+		node->count = disk.count;
+		node->prevOffset = disk.prev;
+		node->nextOffset = disk.next;
+		for (int i = 0; i < disk.count; ++i)
+			node->entries[i] = disk.entries[i];
+	}
+	// 写入叶子文件头：leafhead+leaftail(4096字节)
+	void writeLeafHeader() {
+		leaf_file.seekp(0);
+		leaf_file.write(reinterpret_cast<const char*>(&leafHead), sizeof(uint64_t));
+		leaf_file.write(reinterpret_cast<const char*>(&leafTail), sizeof(uint64_t));
+		leaf_file.seekp(4096);
+	}
+	// 读入叶子文件头
+	void readLeafHeader() {
+		leaf_file.seekg(0);
+		leaf_file.read(reinterpret_cast<char*>(&leafHead), sizeof(uint64_t));
+		leaf_file.read(reinterpret_cast<char*>(&leafTail), sizeof(uint64_t));
+		leaf_file.seekg(4096);
+	}
+	// 从文件offset处读入完整的LeafNode
+	LeafNode* readLeaf_at(uint64_t offset) {
+		leaf_file.seekg(offset);
+		LeafNode* leaf = new LeafNode();
+		readLeaf_leaf(leaf);
+		return leaf;
+	}
+	// 读入内存版LeafNode
+	LeafNode* readLeaf_at2(uint64_t offset) {
+		LeafNode* leaf = new LeafNode();
+		leaf->fileOffset = offset;
+		return leaf;
+	}
+	// 分配新叶子节点
+	uint64_t allocateLeaf(LeafNode* leaf) {
+		uint64_t offset = 4096;
+		leaf_file.seekp(offset);
+		leaf->fileOffset = offset;
+		leaf->prevOffset = 0;
+		leaf->nextOffset = 0;
+		writeLeaf_leaf(leaf);
+		leaf_file.flush();
+		leafHead = leafTail = offset;
+		writeLeafHeader();
+		return offset;
+	}
+	// 更新文件中的叶子节点
+	void updateLeaf(LeafNode* leaf) {
+		if (leaf->fileOffset == 0)
+			allocateLeaf(leaf);
+		else {
+			leaf_file.seekp(leaf->fileOffset);
+			writeLeaf_leaf(leaf);
+			leaf_file.flush();
+		}
+	}
+	// 递归将树写入树文件（前序遍历）
+	void writeTree(Node* node) {
+		if (node->type == LEAF_NODE) {
+			LeafNode* leaf = static_cast<LeafNode*>(node);
+			uint64_t leafOff = leaf->fileOffset;
+			tree_file.write(reinterpret_cast<const char*>(&leaf->type), 1);
+			tree_file.write(reinterpret_cast<const char*>(&leafOff), sizeof(uint64_t));
+			return;
+		}
+		InternalNode* inode = static_cast<InternalNode*>(node);
+		tree_file.write(reinterpret_cast<const char*>(&inode->type), 1);
+		tree_file.write(reinterpret_cast<const char*>(&inode->count), 4);
+		tree_file.write(reinterpret_cast<const char*>(inode->keys), sizeof(inode->keys));
+		for (size_t i = 0; i < inode->count + 1; ++i) {
+			writeTree(inode->children[i]);
+		}
+	}
+	// 从树文件递归重建树
+	Node* readTree() {
+		char type;
+		tree_file.read(&type, 1);
+		if (type == LEAF_NODE) {
+			uint64_t off;
+			tree_file.read(reinterpret_cast<char*>(&off), 8);
+			return readLeaf_at2(off);
+		}
+		else if (type == INTERNAL_NODE) {
+			InternalNode* inode = new InternalNode();
+			tree_file.read(reinterpret_cast<char*>(&inode->count), 4);
+			tree_file.read(reinterpret_cast<char*>(inode->keys), sizeof(inode->keys));
+			// 子节点
+			for (int i = 0; i <= inode->count; ++i) {
+				inode->children[i] = readTree();
+			}
+			return inode;
+		}
+		return nullptr;
+	}
+	// 保存树到内存
+	void saveTree() {
+		tree_file.open(tree_name, std::ios::out | std::ios::binary | std::ios::trunc);
+		if (!tree_file.is_open()) return;
+		writeTree(root);
+		tree_file.close();
+	}
+	// 从外存读入树
+	void loadTree() {
+		tree_file.open(tree_name, std::ios::in | std::ios::binary);
+		if (!tree_file.is_open()) return;
+		root = readTree();
+		tree_file.close();
+	}
+	// 递归删除整棵树
+	void deleteNode(Node* node) {
+		if (node == nullptr) return;
+		if (node->type == INTERNAL_NODE) {
+			InternalNode* inode = static_cast<InternalNode*>(node);
+			for (int i = 0; i <= inode->count; ++i) {
+				deleteNode(inode->children[i]);
+			}
+			delete inode;
+		}
+		else if (node->type == LEAF_NODE) {
+			delete static_cast<LeafNode*>(node);
+		}
+	}
+	bool insert(Node* node, const KeyValue& kv, KeyValue& promotedKey, Node*& promotedChild) {
+		if (node->type == LEAF_NODE) {
+			LeafNode* leaf = static_cast<LeafNode*>(node);
+			LeafNode* fullLeaf = readLeaf_at(leaf->fileOffset);
+			KeyValue tem;
+			bool overflow = fullLeaf->insert(kv, tem);
+			if (!overflow) {
+				updateLeaf(fullLeaf);
+				delete fullLeaf;
+				return false;
+			}
+			LeafNode* newLeaf = fullLeaf->split();
+			newLeaf->entries[newLeaf->count] = tem;
+			newLeaf->count++;
+			promotedKey = newLeaf->getFirstEntry();
+			leaf_file.seekp(0, std::ios::end);
+			uint64_t offset = leaf_file.tellp();
+			if (offset % BLOCK_SIZE != 0) {
+				leaf_file.seekp((offset + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE);
+				offset = leaf_file.tellp();
+			}
+			newLeaf->fileOffset = offset;
+			newLeaf->prevOffset = fullLeaf->fileOffset;
+			newLeaf->nextOffset = fullLeaf->nextOffset;
+			promotedChild = newLeaf;
+			if (fullLeaf->nextOffset) {
+				LeafNode* oldNext = readLeaf_at(fullLeaf->nextOffset);
+				oldNext->prevOffset = newLeaf->fileOffset;
+				leaf_file.seekp(fullLeaf->nextOffset);
+				writeLeaf_leaf(oldNext);
+				delete oldNext;
+			} else {
+				leafTail = newLeaf->fileOffset;
+			}
+			fullLeaf->nextOffset = newLeaf->fileOffset;
+			updateLeaf(fullLeaf);
+			updateLeaf(newLeaf);
+			writeLeafHeader();
+			delete fullLeaf;
+			return true;
+		}
         else {
-            leaf_file.seekp(leaf->fileOffset);
-            leaf->writeLeaf(leaf_file);
-            leaf_file.flush();
-        }
-    }
-
-    // 递归写入树文件
-    void writeTree(Node* node, std::ostream& out) {
-        if (node->type == LEAF_NODE) {
-            auto* leaf = static_cast<LeafNode<KeyType, ValueType>*>(node);
-            leaf->writeTreeRef(out);
-            return;
-        }
-        auto* inode = static_cast<InternalNode<KeyType, ValueType>*>(node);
-        out.write(reinterpret_cast<const char*>(&inode->type), 1);
-        out.write(reinterpret_cast<const char*>(&inode->count), sizeof(int));
-        for (int i = 0; i < inode->count; ++i) {
-            out.write(reinterpret_cast<const char*>(&inode->keys[i].key), sizeof(KeyType));
-            out.write(reinterpret_cast<const char*>(&inode->keys[i].value), sizeof(ValueType));
-        }
-        for (size_t i = 0; i < inode->children.size(); ++i) {
-            writeTree(inode->children[i], out);
-        }
-    }
-
-    // 递归读取树文件
-    Node* readTree(std::istream& in) {
-        char type;
-        in.read(&type, 1);
-        if (type == LEAF_NODE) {
-            uint64_t off;
-            in.read(reinterpret_cast<char*>(&off), sizeof(uint64_t));
-            return createLeafStub(off);
-        } else if (type == INTERNAL_NODE) {
-            auto* inode = new InternalNode<KeyType, ValueType>();
-            in.read(reinterpret_cast<char*>(&inode->count), sizeof(int));
-            for (int i = 0; i < inode->count; ++i) {
-                KeyValue<KeyType, ValueType> kv;
-                in.read(reinterpret_cast<char*>(&kv.key), sizeof(KeyType));
-                in.read(reinterpret_cast<char*>(&kv.value), sizeof(ValueType));
-                inode->keys.push_back(kv);
-            }
-            for (int i = 0; i <= inode->count; ++i) {
-                inode->children.push_back(readTree(in));
-            }
-            return inode;
-        }
-        return nullptr;
-    }
-
-    void saveTree() {
-        tree_file.open(tree_name, std::ios::out | std::ios::binary | std::ios::trunc);
-        if (!tree_file.is_open()) return;
-        writeTree(root, tree_file);
-        tree_file.close();
-    }
-
-    void loadTree() {
-        tree_file.open(tree_name, std::ios::in | std::ios::binary);
-        if (!tree_file.is_open()) return;
-        root = readTree(tree_file);
-        tree_file.close();
-    }
-
-    void deleteNode(Node* node) {
-        if (node == nullptr) return;
-        if (node->type == INTERNAL_NODE) {
-            auto* inode = static_cast<InternalNode<KeyType, ValueType>*>(node);
-            for (Node* child : inode->children) deleteNode(child);
-            delete inode;
-        } else {
-            delete static_cast<LeafNode<KeyType, ValueType>*>(node);
-        }
-    }
-
-    // 插入辅助函数，返回是否需要提升
-    bool insertHelper(Node* node, const KeyValue<KeyType, ValueType>& kv,
-                      KeyValue<KeyType, ValueType>& promotedKey, Node*& promotedChild) {
-        if (node->type == LEAF_NODE) {
-            auto* leafStub = static_cast<LeafNode<KeyType, ValueType>*>(node);
-            auto* leaf = readLeafNode(leafStub->fileOffset);
-            if (!leaf->insert(kv)) {
-                delete leaf;
-                return false;
-            }
-            if (leaf->count > MAX_KEYS) {
-                auto* newLeaf = leaf->split();
-                // 分配新叶子节点在文件中的位置
-                leaf_file.seekp(0, std::ios::end);
-                uint64_t offset = leaf_file.tellp();
-                if (offset % BLOCK_SIZE != 0) {
-                    offset = (offset + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE;
-                    leaf_file.seekp(offset);
-                }
-                promotedKey = newLeaf->getFirstEntry();
-                newLeaf->fileOffset = offset;
-                newLeaf->prevOffset = leaf->fileOffset;
-                newLeaf->nextOffset = leaf->nextOffset;
-                promotedChild = newLeaf;  // 新节点在内存中
-
-                // 更新链表
-                if (leaf->nextOffset) {
-                    auto* oldNext = readLeafNode(leaf->nextOffset);
-                    oldNext->prevOffset = newLeaf->fileOffset;
-                    leaf_file.seekp(leaf->nextOffset);
-                    oldNext->writeLeaf(leaf_file);
-                    delete oldNext;
-                } else {
-                    leafTail = newLeaf->fileOffset;
-                }
-                leaf->nextOffset = newLeaf->fileOffset;
-                updateLeaf(leaf);
-                updateLeaf(newLeaf);
-                writeLeafHeader();
-                delete leaf;
-                return true;
-            } else {
-                updateLeaf(leaf);
-                delete leaf;
-                return false;
-            }
-        } else {
-            auto* inode = static_cast<InternalNode<KeyType, ValueType>*>(node);
+            InternalNode* inode = static_cast<InternalNode*>(node);
             Node* child = inode->findChild(kv);
-            KeyValue<KeyType, ValueType> childPromotedKey;
+            KeyValue childPromotedKey;
             Node* childPromotedChild = nullptr;
-            bool need = insertHelper(child, kv, childPromotedKey, childPromotedChild);
+            bool need = insert(child, kv, childPromotedKey, childPromotedChild);
             if (!need) return false;
-            int pos = upper_bound(childPromotedKey, inode->keys);
-            inode->insertKey(childPromotedKey, child, childPromotedChild, pos);
-            if (inode->count > MAX_KEYS) {
-                KeyValue<KeyType, ValueType> newPromoted;
-                auto* newInt = inode->split(newPromoted);
-                promotedKey = newPromoted;
-                promotedChild = newInt;
-                return true;
+            int pos = inode->u_bound(childPromotedKey, inode);
+        	KeyValue tem;
+        	Node* temp;
+            if (inode->insertKey(childPromotedKey, child, childPromotedChild, pos, tem, temp)) {
+            	KeyValue newPromoted;
+            	InternalNode* newInt = inode->split(newPromoted);
+            	newInt->keys[newInt->count] = tem;
+            	newInt->children[newInt->count + 1] = temp;
+            	newInt->count++;
+            	promotedKey = newPromoted;
+            	promotedChild = newInt;
+            	return true;
             }
             return false;
         }
     }
 
 public:
-    BPlusTree(const char* leaf_file_name, const char* tree_file_name)
-        : leaf_name(leaf_file_name), tree_name(tree_file_name), root(nullptr), leafHead(0), leafTail(0) {
-        leaf_file.open(leaf_name, std::ios::in | std::ios::out | std::ios::binary);
-        if (!leaf_file.is_open()) {
-            leaf_file.open(leaf_name, std::ios::out | std::ios::binary);
-            leaf_file.close();
-            leaf_file.open(leaf_name, std::ios::in | std::ios::out | std::ios::binary);
-            // 初始化空树
-            auto* rootLeaf = new LeafNode<KeyType, ValueType>();
-            root = rootLeaf;
-            allocateLeaf(rootLeaf);
-            writeLeafHeader();
-        } else {
-            readLeafHeader();
-            if (leafHead == 0) {
-                auto* rootLeaf = new LeafNode<KeyType, ValueType>();
-                root = rootLeaf;
-                allocateLeaf(rootLeaf);
-                writeLeafHeader();
-            } else {
-                loadTree();
-            }
-        }
-    }
-
-    ~BPlusTree() {
-        if (root) {
-            saveTree();
-            deleteNode(root);
-        }
-        leaf_file.close();
-    }
-
-    // 查找单个 key，返回所有匹配的 value
-    sjtu::vector<ValueType> find(const KeyType& key) {
-        sjtu::vector<ValueType> result;
-        KeyValue<KeyType, ValueType> lower{key, ValueType{}};
-        Node* cur = root;
-        while (cur->type == INTERNAL_NODE) {
-            cur = static_cast<InternalNode<KeyType, ValueType>*>(cur)->findChild(lower);
-        }
-        auto* leafStub = static_cast<LeafNode<KeyType, ValueType>*>(cur);
-        uint64_t curOff = leafStub->fileOffset;
-        while (curOff != 0) {
-            auto* leaf = readLeafNode(curOff);
-            if (leaf->count > 0 && leaf->entries[0].key > key) {
-                delete leaf;
-                break;
-            }
-            for (const auto& e : leaf->entries) {
-                if (e.key == key) result.push_back(e.value);
-                else if (e.key > key) break;
-            }
-            curOff = leaf->nextOffset;
-            delete leaf;
-        }
-        return result;
-    }
-
-    // 插入
-    void insert(const KeyType& key, const ValueType& value) {
-        KeyValue<KeyType, ValueType> kv{key, value};
-        KeyValue<KeyType, ValueType> promotedKey;
-        Node* promotedChild = nullptr;
-        if (insertHelper(root, kv, promotedKey, promotedChild)) {
-            auto* newRoot = new InternalNode<KeyType, ValueType>();
-            newRoot->children.push_back(root);
-            newRoot->keys.push_back(promotedKey);
-            newRoot->children.push_back(promotedChild);
-            newRoot->count = 1;
-            root = newRoot;
-        }
-    }
-
-    // 删除（完整实现，包含借用和合并）
-    bool remove(const KeyType& key, const ValueType& value) {
-        KeyValue<KeyType, ValueType> kv{key, value};
+	BPlusTree(const std::string& leaf_name, const std::string& tree_name)
+		: leaf_name(leaf_name), tree_name(tree_name), root(nullptr), leafHead(0), leafTail(0) {
+		// 打开叶子文件
+		leaf_file.open(leaf_name, std::ios::in | std::ios::out | std::ios::binary);
+		if (!leaf_file.is_open()) {
+			leaf_file.open(leaf_name, std::ios::out | std::ios::binary);
+			leaf_file.close();
+			leaf_file.open(leaf_name, std::ios::in | std::ios::out | std::ios::binary);
+			// 初始化空树
+			LeafNode* rootLeaf = new LeafNode();
+			root = rootLeaf;
+			allocateLeaf(rootLeaf);
+			writeLeafHeader();
+		}
+		else {
+			readLeafHeader();
+			if (leafHead == 0) {
+				LeafNode* rootLeaf = new LeafNode();
+				root = rootLeaf;
+				allocateLeaf(rootLeaf);
+				writeLeafHeader();
+			}
+			else {
+				loadTree();
+			}
+		}
+	}
+	~BPlusTree() {
+		if (root) {
+			saveTree();   // 保存树
+			deleteNode(root);
+		}
+		leaf_file.close();
+	}
+	sjtu::vector<Value> find(const Key& key) {
+		sjtu::vector<Value> result;
+		KeyValue lower{key, Value()};
+		Node* cur = root;
+		while (cur->type == INTERNAL_NODE) {
+			cur = static_cast<InternalNode*>(cur)->findChild(lower);
+		}
+		LeafNode* leaf = static_cast<LeafNode*>(cur);
+		uint64_t cur_off = leaf->fileOffset;
+		while (cur_off != 0) {
+			LeafNode* node = readLeaf_at(cur_off);
+			// 若当前节点的第一个键大于 key，停止
+			if (node->count > 0 && node->entries[0].key > key) {
+				delete node;
+				break;
+			}
+			// 收集value
+			for (int i = 0; i < node->count; ++i) {
+				if (node->entries[i].key == key) result.push_back(node->entries[i].value);
+				else if (node->entries[i].key > key) break;
+			}
+			cur_off = node->nextOffset;
+			delete node;
+		}
+		return result;
+	}
+	void insert(const Key& key, const Value& value) {
+		KeyValue kv{key, value};
+		KeyValue promotedKey;
+		Node* promotedChild = nullptr;
+		if (insert(root, kv, promotedKey, promotedChild)) {
+			InternalNode* newRoot = new InternalNode();
+			newRoot->children[0] = root;
+			newRoot->keys[0] = promotedKey;
+			newRoot->children[1] = promotedChild;
+			newRoot->count = 1;
+			root = newRoot;
+		}
+	}
+	bool remove(const Key& key, const Value& value) {
+        KeyValue kv{key, value};
         if (root == nullptr) return false;
-
-        // 根为叶子节点
+        // 根为叶节点：直接删除
         if (root->type == LEAF_NODE) {
-            auto* leafStub = static_cast<LeafNode<KeyType, ValueType>*>(root);
-            auto* leaf = readLeafNode(leafStub->fileOffset);
-            bool removed = leaf->remove(kv);
+            LeafNode* leaf_ptr = static_cast<LeafNode*>(root);
+            LeafNode* leaf = readLeaf_at(leaf_ptr->fileOffset);
+            bool removed = leaf->remove(kv);  // 记录是否找到
             if (removed) updateLeaf(leaf);
             delete leaf;
             return removed;
         }
-
         // 向下搜索并记录路径
-        sjtu::vector<InternalNode<KeyType, ValueType>*> path;
+        sjtu::vector<InternalNode*> path;
         sjtu::vector<int> indices;
         Node* cur = root;
         while (cur->type == INTERNAL_NODE) {
-            auto* in = static_cast<InternalNode<KeyType, ValueType>*>(cur);
-            int idx = upper_bound(kv, in->keys);
+            InternalNode* in = static_cast<InternalNode*>(cur);
+            int idx = in->u_bound(kv, in);
             path.push_back(in);
             indices.push_back(idx);
             cur = in->children[idx];
         }
-        auto* leafStub = static_cast<LeafNode<KeyType, ValueType>*>(cur);
-        auto* leaf = readLeafNode(leafStub->fileOffset);
+        LeafNode* leafPtr = static_cast<LeafNode*>(cur);
+        LeafNode* leaf = readLeaf_at(leafPtr->fileOffset);  // 完整叶节点
         if (!leaf->remove(kv)) {
             delete leaf;
             return false;
         }
         updateLeaf(leaf);
-
-        // 处理下溢
-        bool isLeaf = true;
-        Node* curNode = leaf;
-        bool leafDeleted = false;
-
+        Node* cur_node = leaf;
+        bool is_leaf = true;
+        // 用于内存清理：记录叶节点是否已被合并删除
+        LeafNode* leaf_to_delete = leaf;
+        bool leaf_deleted = false;
         while (true) {
-            if (isLeaf) {
-                auto* curLeaf = static_cast<LeafNode<KeyType, ValueType>*>(curNode);
-                if (curLeaf->count >= MIN_KEYS || path.empty()) break;
-
-                auto* parent = path.back();
+            if (is_leaf) {
+                LeafNode* curLeaf = static_cast<LeafNode*>(cur_node);
+                if (curLeaf->count >= LEAF_MAX_ENTRIES / 2 || path.empty()) break;
+                InternalNode* parent = path.back();
                 int idx = indices.back();
-
-                // 尝试向左兄弟借用
+                // 1. 向左兄弟借
                 if (idx > 0) {
-                    auto* leftStub = dynamic_cast<LeafNode<KeyType, ValueType>*>(parent->children[idx-1]);
-                    auto* leftLeaf = readLeafNode(leftStub->fileOffset);
-                    if (leftLeaf->count > MIN_KEYS) {
-                        KeyValue<KeyType, ValueType> borrowed = leftLeaf->entries.back();
-                        leftLeaf->entries.pop_back();
+                    LeafNode* leftPtr = dynamic_cast<LeafNode*>(parent->children[idx-1]);
+                    LeafNode* leftLeaf = readLeaf_at(leftPtr->fileOffset);
+                    if (leftLeaf->count > LEAF_MAX_ENTRIES / 2) {
+                        KeyValue borrowed = leftLeaf->entries[leftLeaf->count - 1];
                         leftLeaf->count--;
-                        curLeaf->entries.insert(curLeaf->entries.begin(), borrowed);
+                    	for (int i = curLeaf->count; i > 0; --i) {
+                    		curLeaf->entries[i] = curLeaf->entries[i - 1];
+                    	}
+                    	curLeaf->entries[0] = borrowed;
                         curLeaf->count++;
                         parent->keys[idx-1] = curLeaf->entries[0];
                         updateLeaf(leftLeaf);
@@ -542,16 +554,17 @@ public:
                     }
                     delete leftLeaf;
                 }
-
-                // 尝试向右兄弟借用
+                // 2. 向右兄弟借
                 if (idx < parent->count) {
-                    auto* rightStub = dynamic_cast<LeafNode<KeyType, ValueType>*>(parent->children[idx+1]);
-                    auto* rightLeaf = readLeafNode(rightStub->fileOffset);
-                    if (rightLeaf->count > MIN_KEYS) {
-                        KeyValue<KeyType, ValueType> borrowed = rightLeaf->entries.front();
-                        rightLeaf->entries.erase(rightLeaf->entries.begin());
+                    LeafNode* rightPtr = dynamic_cast<LeafNode*>(parent->children[idx+1]);
+                    LeafNode* rightLeaf = readLeaf_at(rightPtr->fileOffset);
+                    if (rightLeaf->count > LEAF_MAX_ENTRIES / 2) {
+                        KeyValue borrowed = rightLeaf->entries[0];
+                    	for (int i = 0; i < rightLeaf->count - 1; ++i) {
+                    		rightLeaf->entries[i] = rightLeaf->entries[i + 1];
+                    	}
                         rightLeaf->count--;
-                        curLeaf->entries.push_back(borrowed);
+                    	curLeaf->entries[curLeaf->count] = borrowed;
                         curLeaf->count++;
                         parent->keys[idx] = rightLeaf->entries[0];
                         updateLeaf(rightLeaf);
@@ -561,18 +574,17 @@ public:
                     }
                     delete rightLeaf;
                 }
-
-                // 合并
-                if (idx > 0) {
-                    // 与左兄弟合并
-                    auto* leftStub = dynamic_cast<LeafNode<KeyType, ValueType>*>(parent->children[idx-1]);
-                    auto* leftLeaf = readLeafNode(leftStub->fileOffset);
-                    for (const auto& e : curLeaf->entries)
-                        leftLeaf->entries.push_back(e);
-                    leftLeaf->count += curLeaf->count;
+                // 3. 合并
+                if (idx > 0) {   // 与左兄弟合并
+                    LeafNode* leftPtr = dynamic_cast<LeafNode*>(parent->children[idx-1]);
+                    LeafNode* leftLeaf = readLeaf_at(leftPtr->fileOffset);
+                	for (int i = 0; i < curLeaf->count; ++i) {
+                		leftLeaf->entries[leftLeaf->count] = curLeaf->entries[i];
+                		leftLeaf->count++;
+                	}
                     leftLeaf->nextOffset = curLeaf->nextOffset;
                     if (curLeaf->nextOffset != 0) {
-                        auto* nextLeaf = readLeafNode(curLeaf->nextOffset);
+                        LeafNode* nextLeaf = readLeaf_at(curLeaf->nextOffset);
                         nextLeaf->prevOffset = leftLeaf->fileOffset;
                         updateLeaf(nextLeaf);
                         delete nextLeaf;
@@ -580,28 +592,33 @@ public:
                         leafTail = leftLeaf->fileOffset;
                         writeLeafHeader();
                     }
-                    parent->keys.erase(parent->keys.begin() + idx - 1);
-                    parent->children.erase(parent->children.begin() + idx);
+                    // 从父节点删除当前叶节点
+                	for (int i = idx - 1; i < parent->count - 1; ++i) {
+                		parent->keys[i] = parent->keys[i + 1];
+                	}
+                	for (int i = idx; i < parent->count; ++i) {
+                		parent->children[i] = parent->children[i + 1];
+                	}
                     parent->count--;
                     updateLeaf(leftLeaf);
                     delete leftLeaf;
-                    delete curLeaf;
-                    delete leafStub;
-                    leafDeleted = true;
-                    curNode = parent;
-                    isLeaf = false;
+                    delete curLeaf;          // 完整叶节点
+                    delete leafPtr;
+                    leaf_deleted = true;
+                    cur_node = parent;
+                    is_leaf = false;
                     path.pop_back();
                     indices.pop_back();
-                } else {
-                    // 与右兄弟合并
-                    auto* rightStub = dynamic_cast<LeafNode<KeyType, ValueType>*>(parent->children[idx+1]);
-                    auto* rightLeaf = readLeafNode(rightStub->fileOffset);
-                    for (const auto& e : rightLeaf->entries)
-                        curLeaf->entries.push_back(e);
-                    curLeaf->count += rightLeaf->count;
+                } else {        // 与右兄弟合并
+                    LeafNode* rightPtr = dynamic_cast<LeafNode*>(parent->children[idx+1]);
+                    LeafNode* rightLeaf = readLeaf_at(rightPtr->fileOffset);
+                	for (int i = 0; i < rightLeaf->count; ++i) {
+                		curLeaf->entries[curLeaf->count] = rightLeaf->entries[i];
+                		curLeaf->count++;
+                	}
                     curLeaf->nextOffset = rightLeaf->nextOffset;
                     if (rightLeaf->nextOffset != 0) {
-                        auto* nextLeaf = readLeafNode(rightLeaf->nextOffset);
+                        LeafNode* nextLeaf = readLeaf_at(rightLeaf->nextOffset);
                         nextLeaf->prevOffset = curLeaf->fileOffset;
                         updateLeaf(nextLeaf);
                         delete nextLeaf;
@@ -609,132 +626,152 @@ public:
                         leafTail = curLeaf->fileOffset;
                         writeLeafHeader();
                     }
-                    parent->keys.erase(parent->keys.begin() + idx);
-                    parent->children.erase(parent->children.begin() + idx + 1);
+                	for (int i = idx; i < parent->count - 1; ++i) {
+                		parent->keys[i] = parent->keys[i + 1];
+                	}
+                	for (int i = idx + 1; i < parent->count; ++i) {
+                		parent->children[i] = parent->children[i + 1];
+                	}
                     parent->count--;
                     updateLeaf(curLeaf);
                     delete rightLeaf;
-                    delete rightStub;
-                    curNode = parent;
-                    isLeaf = false;
+                    delete rightPtr;
+                    cur_node = parent;
+                    is_leaf = false;
                     path.pop_back();
                     indices.pop_back();
                 }
             } else {
-                auto* curInt = static_cast<InternalNode<KeyType, ValueType>*>(curNode);
-                if (curInt->count >= MIN_KEYS || path.empty()) break;
+                InternalNode* curInt = static_cast<InternalNode*>(cur_node);
+                if (curInt->count >= INTERNAL_MAX_KEYS / 2 || path.empty()) break;
 
-                auto* parent = path.back();
+                InternalNode* parent = path.back();
                 int idx = indices.back();
 
-                // 尝试向左兄弟借用
+                // 1. 向左兄弟借
                 if (idx > 0) {
-                    auto* leftSib = dynamic_cast<InternalNode<KeyType, ValueType>*>(parent->children[idx-1]);
-                    if (leftSib->count > MIN_KEYS) {
-                        curInt->keys.insert(curInt->keys.begin(), parent->keys[idx-1]);
-                        curInt->children.insert(curInt->children.begin(), leftSib->children.back());
-                        leftSib->children.pop_back();
-                        parent->keys[idx-1] = leftSib->keys.back();
-                        leftSib->keys.pop_back();
-                        curInt->count++;
-                        leftSib->count--;
+                    InternalNode* leftSib = dynamic_cast<InternalNode*>(parent->children[idx-1]);
+                    if (leftSib->count > INTERNAL_MAX_KEYS / 2) {
+                        // 旋转
+                    	for (int i = curInt->count; i > 0; --i) curInt->keys[i] = curInt->keys[i-1];
+                    	for (int i = curInt->count + 1; i > 0; --i) curInt->children[i] = curInt->children[i-1];
+                    	curInt->keys[0] = parent->keys[idx-1];
+                    	curInt->children[0] = leftSib->children[leftSib->count];
+                    	curInt->count++;
+                    	leftSib->count--;
+                        parent->keys[idx-1] = leftSib->keys[leftSib->count];
                         break;
                     }
                 }
-
-                // 尝试向右兄弟借用
+                // 2. 向右兄弟借
                 if (idx < parent->count) {
-                    auto* rightSib = dynamic_cast<InternalNode<KeyType, ValueType>*>(parent->children[idx+1]);
-                    if (rightSib->count > MIN_KEYS) {
-                        curInt->keys.push_back(parent->keys[idx]);
-                        curInt->children.push_back(rightSib->children.front());
-                        rightSib->children.erase(rightSib->children.begin());
-                        parent->keys[idx] = rightSib->keys.front();
-                        rightSib->keys.erase(rightSib->keys.begin());
+                    InternalNode* rightSib = dynamic_cast<InternalNode*>(parent->children[idx+1]);
+                    if (rightSib->count > INTERNAL_MAX_KEYS / 2) {
+                    	curInt->keys[curInt->count] = parent->keys[idx];
+                    	curInt->children[curInt->count + 1] = rightSib->children[0];
+                    	for (int i = 0; i < rightSib->count; ++i) {
+                    		rightSib->children[i] = rightSib->children[i+1];
+                    	}
+                    	parent->keys[idx] = rightSib->keys[0];
+                    	for (int i = 0; i < rightSib->count - 1; ++i) {
+                    		rightSib->keys[i] = rightSib->keys[i+1];
+                    	}
                         curInt->count++;
                         rightSib->count--;
                         break;
                     }
                 }
-
-                // 合并
-                if (idx > 0) {
-                    // 与左兄弟合并
-                    auto* leftSib = dynamic_cast<InternalNode<KeyType, ValueType>*>(parent->children[idx-1]);
-                    leftSib->keys.push_back(parent->keys[idx-1]);
-                    for (const auto& k : curInt->keys) leftSib->keys.push_back(k);
-                    for (auto* c : curInt->children) leftSib->children.push_back(c);
+                // 3. 合并
+                if (idx > 0) {   // 与左兄弟合并
+                    InternalNode* leftSib = dynamic_cast<InternalNode*>(parent->children[idx-1]);
+                	leftSib->keys[leftSib->count] = parent->keys[idx-1];
+                	for (int i = 0; i < curInt->count; ++i) {
+                		leftSib->keys[leftSib->count + 1 + i] = curInt->keys[i];
+                	}
+                	for (int i = 0; i <= curInt->count; ++i) { // children 数量 = count+1
+                		leftSib->children[leftSib->count + 1 + i] = curInt->children[i];
+                	}
                     leftSib->count += 1 + curInt->count;
-                    parent->keys.erase(parent->keys.begin() + idx - 1);
-                    parent->children.erase(parent->children.begin() + idx);
+                	for (int i = idx - 1; i < parent->count - 1; ++i) {
+                		parent->keys[i] = parent->keys[i+1];
+                	}
+                	for (int i = idx; i < parent->count; ++i) {
+                		parent->children[i] = parent->children[i+1];
+                	}
                     parent->count--;
                     delete curInt;
-                    curNode = parent;
-                    isLeaf = false;
+                    cur_node = parent;
+                    is_leaf = false;
                     path.pop_back();
                     indices.pop_back();
-                } else {
-                    // 与右兄弟合并
-                    auto* rightSib = dynamic_cast<InternalNode<KeyType, ValueType>*>(parent->children[idx+1]);
-                    curInt->keys.push_back(parent->keys[idx]);
-                    for (const auto& k : rightSib->keys) curInt->keys.push_back(k);
-                    for (auto* c : rightSib->children) curInt->children.push_back(c);
+                } else {          // 与右兄弟合并
+                    InternalNode* rightSib = dynamic_cast<InternalNode*>(parent->children[idx+1]);
+                	curInt->keys[curInt->count] = parent->keys[idx];
+                	for (int i = 0; i < rightSib->count; ++i) {
+                		curInt->keys[curInt->count + 1 + i] = rightSib->keys[i];
+                	}
+                	for (int i = 0; i <= rightSib->count; ++i) {
+                		curInt->children[curInt->count + 1 + i] = rightSib->children[i];
+                	}
                     curInt->count += 1 + rightSib->count;
-                    parent->keys.erase(parent->keys.begin() + idx);
-                    parent->children.erase(parent->children.begin() + idx + 1);
+                	for (int i = idx; i < parent->count - 1; ++i) {
+                		parent->keys[i] = parent->keys[i+1];
+                	}
+                	for (int i = idx + 1; i < parent->count; ++i) { // 注意 children 数量
+                		parent->children[i] = parent->children[i+1];
+                	}
                     parent->count--;
                     delete rightSib;
-                    curNode = parent;
-                    isLeaf = false;
+                    cur_node = parent;
+                    is_leaf = false;
                     path.pop_back();
                     indices.pop_back();
                 }
             }
         }
-
-        if (!leafDeleted) delete leaf;
-        // 根节点收缩
-        if (root->type == INTERNAL_NODE && static_cast<InternalNode<KeyType, ValueType>*>(root)->count == 0) {
-            Node* newRoot = static_cast<InternalNode<KeyType, ValueType>*>(root)->children[0];
+        // 如果叶节点没有被合并删除，需要手动清理
+        if (!leaf_deleted) delete leaf_to_delete;
+        // 删除根，树的高度变矮
+        if (root->type == INTERNAL_NODE && static_cast<InternalNode*>(root)->count == 0) {
+            Node* newRoot = static_cast<InternalNode*>(root)->children[0];
             delete root;
             root = newRoot;
         }
         return true;
     }
+	// 范围查询
+	void rangeQuery(const Key& startKey, const Key& endKey,sjtu::vector<Key>& keys, sjtu::vector<Value>& values) {
+		KeyValue lower{startKey, Value{}};
+		Node* cur = root;
+		while (cur->type == INTERNAL_NODE) {
+			cur = static_cast<InternalNode*>(cur)->findChild(lower);
+		}
+		auto* leafStub = static_cast<LeafNode*>(cur);
+		uint64_t curOff = leafStub->fileOffset;
+		while (curOff != 0) {
+			auto* leaf = readLeaf_at(curOff);
+			bool beyond = false;
+			for (int i = 0; i < leaf->count; ++i) {
+				if (leaf->entries[i].key < startKey) continue;
+				if (leaf->entries[i].key > endKey){beyond = true; break;}
+				keys.push_back(leaf->entries[i].key);
+				values.push_back(leaf->entries[i].value);
+			}
+			delete leaf;
+			if (beyond) break;
+			curOff = leaf->nextOffset;
+		}
+	}
+	bool empty() const {
+		// 打开叶子文件
+		std::ifstream in(leaf_name, std::ios::binary);
+		if (!in.is_open()) return true;      // 文件无法打开，视为空
+		if (leafHead == 0) return true;      // 无叶子节点，视为空
+		in.seekg(leafHead);                  // 定位到第一个叶子节点的起始位置
+		int count;
+		in.read(reinterpret_cast<char*>(&count), sizeof(int));
+		return count == 0;
+	}
 
-    // 范围查询
-    void rangeQuery(const KeyType& startKey, const KeyType& endKey,
-                    sjtu::vector<KeyValue<KeyType, ValueType>>& result) {
-        KeyValue<KeyType, ValueType> lower{startKey, ValueType{}};
-        Node* cur = root;
-        while (cur->type == INTERNAL_NODE) {
-            cur = static_cast<InternalNode<KeyType, ValueType>*>(cur)->findChild(lower);
-        }
-        auto* leafStub = static_cast<LeafNode<KeyType, ValueType>*>(cur);
-        uint64_t curOff = leafStub->fileOffset;
-        while (curOff != 0) {
-            auto* leaf = readLeafNode(curOff);
-            bool beyond = false;
-            for (const auto& e : leaf->entries) {
-                if (e.key < startKey) continue;
-                if (e.key > endKey) { beyond = true; break; }
-                result.push_back(e);
-            }
-            delete leaf;
-            if (beyond) break;
-            curOff = leaf->nextOffset;
-        }
-    }
-    bool empty() const {
-        // 打开叶子文件
-        std::ifstream in(leaf_name, std::ios::binary);
-        if (!in.is_open()) return true;      // 文件无法打开，视为空
-        if (leafHead == 0) return true;      // 无叶子节点，视为空
-        in.seekg(leafHead);                  // 定位到第一个叶子节点的起始位置
-        int count;
-        in.read(reinterpret_cast<char*>(&count), sizeof(int));
-        return count == 0;
-    }
 };
-
 #endif // TICKET_SYSTEM_BPT_H

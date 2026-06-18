@@ -4,8 +4,9 @@
 
 #ifndef TICKET_SYSTEM_UTILITY_H
 #define TICKET_SYSTEM_UTILITY_H
-
+#include <cstdio>
 #include <utility>
+#include "vector.h"
 
 namespace sjtu {
         template<class T1, class T2>
@@ -36,6 +37,4 @@ namespace sjtu {
     pair(T1, T2) -> pair<T1, T2>;
 
 }
-
-
 #endif //TICKET_SYSTEM_UTILITY_H
