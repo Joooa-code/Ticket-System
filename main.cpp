@@ -5,12 +5,12 @@
 #include <string>
 #include <sstream>
 #include <cstring>
-#include "../include/user.h"
-#include "../include/train.h"
-#include "../include/order.h"
-#include "../include/utils.h"
-#include "../include/vector.h"
-#include "../include/map.h"
+#include "include/user.h"
+#include "include/train.h"
+#include "include/order.h"
+#include "include/utils.h"
+#include "include/vector.h"
+#include "include/map.h"
 using namespace std;
 
 UserManager userMgr;
