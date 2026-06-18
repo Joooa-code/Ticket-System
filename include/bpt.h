@@ -766,5 +766,6 @@ public:
 		return root == nullptr || root->count == 0;
 	}
 
+
 };
 #endif // TICKET_SYSTEM_BPT_H
