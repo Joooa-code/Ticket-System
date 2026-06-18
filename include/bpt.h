@@ -763,8 +763,17 @@ public:
 		}
 	}
 	bool empty() const {
-		return root == nullptr || root->count == 0;
+		// 打开叶子文件
+		std::ifstream in(leaf_name, std::ios::binary);
+		if (!in.is_open()) return true;
+		in.seekg(leafHead);
+		char type;
+		in.read(&type, 1);
+		int count;
+		in.read(reinterpret_cast<char*>(&count), sizeof(int));
+		return count == 0;
 	}
+
 
 };
 #endif // TICKET_SYSTEM_BPT_H
