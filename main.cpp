@@ -68,6 +68,7 @@ int main() {
             const char* p = args["p"].c_str();
             const char* n = args["n"].c_str();
             const char* m = args["m"].c_str();
+            cout << args["g"];
             int g = stoi(args["g"]);
             int ok = userMgr.addUser(cur, u, p, n, m, g);
             cout << "[" << timestamp << "] " << (ok == 0 ? "0" : "-1") << "\n";

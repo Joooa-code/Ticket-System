@@ -65,8 +65,6 @@ public:
     }
     int addUser(const char* curUser, const char* username, const char* password,
                  const char* name, const char* mail, int privilege) {
-        if (!user_map.find(Username(username)).empty()) return -1;
-
         // 创建第一个用户
         // 补充empty()实现
         if (user_map.empty()) {
@@ -83,6 +81,7 @@ public:
             user_map.insert(Username(username), newUser);
             return 0;
         }
+        if (!user_map.find(Username(username)).empty()) return -1;
 
         if (!isOnline(curUser)) return -1;
         int cur_priv = getPrivilege(curUser);

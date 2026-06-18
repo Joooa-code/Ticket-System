@@ -551,6 +551,7 @@ public:
         order_tree.~BPlusTree();
         waiting_tree.~BPlusTree();
         // 删除文件
+        std::remove("order_data");
         std::remove("order_leaf");
         std::remove("order_tree");
         std::remove("waiting_leaf");

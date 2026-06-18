@@ -358,10 +358,12 @@ public:
         station_tree.~BPlusTree();
         seat_tree.~BPlusTree();
         // 删除文件
+        std::remove("train_data");
         std::remove("train_leaf");
         std::remove("train_tree");
         std::remove("station_leaf");
         std::remove("station_tree");
+        std::remove("seat_data");
         std::remove("seat_leaf");
         std::remove("seat_tree");
         // 重建 B+ 树
