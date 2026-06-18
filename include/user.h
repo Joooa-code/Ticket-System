@@ -121,11 +121,11 @@ public:
         auto res = user_map.find(Username(targetUser));
         if (res.empty()) return -1;
         const User& target = res[0];
-        if (cur_priv < target.privilege && strcmp(curUser, targetUser) != 0) {
-            return -1;
+        if (cur_priv > target.privilege || strcmp(curUser, targetUser) == 0) {
+            sprintf(out, "%s %s %s %d", target.username, target.name, target.mailAddr, target.privilege);
+            return 0;
         }
-        sprintf(out, "%s %s %s %d", target.username, target.name, target.mailAddr, target.privilege);
-        return 0;
+        return -1;
     }
     // 不修改的参数用nullptr
     int modifyProfile(const char* curUser, const char* targetUser, const char* newPwd,
