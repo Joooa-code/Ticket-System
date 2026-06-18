@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 include_directories(include src)
 
-add_executable(Ticket_System
+add_executable(code
         main.cpp
         include/train.h
         include/user.h
