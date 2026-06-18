@@ -38,7 +38,11 @@ int main() {
         // 解析时间戳
         size_t pos1 = line.find('[');
         size_t pos2 = line.find(']');
-        int timestamp = stoi(line.substr(pos1 + 1, pos2 - pos1 - 1));
+        if (pos1 == string::npos || pos2 == string::npos || pos2 <= pos1 + 1) {
+            break;
+        }
+        int timestamp;
+        timestamp = stoi(line.substr(pos1 + 1, pos2 - pos1 - 1));
         string rest = line.substr(pos2 + 1);
         // 去除前导空格
         size_t start = rest.find_first_not_of(" \t");
@@ -68,7 +72,6 @@ int main() {
             const char* p = args["p"].c_str();
             const char* n = args["n"].c_str();
             const char* m = args["m"].c_str();
-            cout << args["g"];
             int g = stoi(args["g"]);
             int ok = userMgr.addUser(cur, u, p, n, m, g);
             cout << "[" << timestamp << "] " << (ok == 0 ? "0" : "-1") << "\n";

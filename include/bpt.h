@@ -763,14 +763,7 @@ public:
 		}
 	}
 	bool empty() const {
-		// 打开叶子文件
-		std::ifstream in(leaf_name, std::ios::binary);
-		if (!in.is_open()) return true;      // 文件无法打开，视为空
-		if (leafHead == 0) return true;      // 无叶子节点，视为空
-		in.seekg(leafHead);                  // 定位到第一个叶子节点的起始位置
-		int count;
-		in.read(reinterpret_cast<char*>(&count), sizeof(int));
-		return count == 0;
+		return root == nullptr || root->count == 0;
 	}
 
 };
